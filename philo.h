@@ -6,7 +6,7 @@
 /*   By: jait-chd <jait-chd@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/05/02 14:29:17 by jait-chd          #+#    #+#             */
-/*   Updated: 2025/05/02 14:29:17 by jait-chd         ###   ########.fr       */
+/*   Updated: 2025/07/25 00:52:22 by jait-chd         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -26,7 +26,18 @@ typedef struct s_args
     int time_to_sleep;
     int number_of_times_each_philo_must_eat;
     int thread_id;
+    struct s_philo
+    {
+        int id;
+        pthread_t *philos;
+        pthread_mutex_t *resources;
+        int left;
+        int right;
+    } t_philo;
+    
 } t_args;
+
+
 
 void conditions_that_must_be_true (t_args *args);
 void check_how_args_must_be(int counter, char **vectors);
