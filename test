@@ -1,0 +1,237 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <sys/time.h>
+
+typedef struct s_params t_params;
+
+typedef struct s_philo {
+    int             id;
+    pthread_t       thread;
+    pthread_mutex_t *left_fork;
+    pthread_mutex_t *right_fork;
+    long            last_meal_time;
+    int             meals_eaten;
+    t_params        *params;
+} t_philo;
+
+struct s_params {
+    int             num_philos;
+    long            time_to_die;
+    long            time_to_eat;
+    long            time_to_sleep;
+    int             meals_needed;
+    int             stop;
+    pthread_mutex_t print_mutex;
+    pthread_mutex_t death_mutex;
+    pthread_mutex_t *forks;
+    t_philo         *philos;
+};
+
+long timestamp_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (tv.tv_sec * 1000L + tv.tv_usec / 1000L);
+}
+
+void ms_sleep(long ms)
+{
+    long start = timestamp_ms();
+    while ((timestamp_ms() - start) < ms)
+        usleep(100);
+}
+
+void print_status(t_philo *philo, const char *msg)
+{
+    long time = timestamp_ms();
+
+    pthread_mutex_lock(&philo->params->print_mutex);
+    if (!philo->params->stop)
+        printf("%ld %d %s\n", time, philo->id, msg);
+    pthread_mutex_unlock(&philo->params->print_mutex);
+}
+
+void update_last_meal(t_philo *philo)
+{
+    pthread_mutex_lock(&philo->params->death_mutex);
+    philo->last_meal_time = timestamp_ms();
+    pthread_mutex_unlock(&philo->params->death_mutex);
+}
+
+int check_death(t_philo *philo)
+{
+    long now = timestamp_ms();
+    int died = 0;
+
+    pthread_mutex_lock(&philo->params->death_mutex);
+    if (!philo->params->stop && (now - philo->last_meal_time) > philo->params->time_to_die)
+    {
+        philo->params->stop = 1;
+        died = 1;
+    }
+    pthread_mutex_unlock(&philo->params->death_mutex);
+
+    if (died)
+    {
+        pthread_mutex_lock(&philo->params->print_mutex);
+        printf("%ld %d died\n", now, philo->id);
+        pthread_mutex_unlock(&philo->params->print_mutex);
+    }
+    return died;
+}
+
+void *philosopher_thread(void *arg)
+{
+    t_philo *philo = (t_philo *)arg;
+
+    if (philo->params->num_philos == 1)
+    {
+        print_status(philo, "has taken a fork");
+        ms_sleep(philo->params->time_to_die);
+        print_status(philo, "died");
+        pthread_mutex_lock(&philo->params->death_mutex);
+        philo->params->stop = 1;
+        pthread_mutex_unlock(&philo->params->death_mutex);
+        return NULL;
+    }
+
+    if (philo->id % 2 == 0)
+        usleep(1000); // small delay for even philos to avoid deadlock
+
+    while (1)
+    {
+        if (check_death(philo))
+            break;
+
+        // Take forks
+        pthread_mutex_lock(philo->left_fork);
+        print_status(philo, "has taken a fork");
+        pthread_mutex_lock(philo->right_fork);
+        print_status(philo, "has taken a fork");
+
+        // Eat
+        pthread_mutex_lock(&philo->params->death_mutex);
+        print_status(philo, "is eating");
+        philo->last_meal_time = timestamp_ms();
+        pthread_mutex_unlock(&philo->params->death_mutex);
+
+        ms_sleep(philo->params->time_to_eat);
+
+        pthread_mutex_unlock(philo->right_fork);
+        pthread_mutex_unlock(philo->left_fork);
+
+        philo->meals_eaten++;
+        if (philo->params->meals_needed > 0 &&
+            philo->meals_eaten >= philo->params->meals_needed)
+            break;
+
+        print_status(philo, "is sleeping");
+        ms_sleep(philo->params->time_to_sleep);
+
+        print_status(philo, "is thinking");
+    }
+    return NULL;
+}
+
+int all_ate_enough(t_params *params)
+{
+    int i;
+
+    if (params->meals_needed <= 0)
+        return 0;
+
+    for (i = 0; i < params->num_philos; i++)
+    {
+        if (params->philos[i].meals_eaten < params->meals_needed)
+            return 0;
+    }
+    return 1;
+}
+
+int main(int argc, char **argv)
+{
+    t_params    params;
+    int         i;
+
+    if (argc != 5 && argc != 6)
+    {
+        printf("error : n of args not on point\n");
+        return 1;
+    }
+
+    params.num_philos = atoi(argv[1]);
+    params.time_to_die = atol(argv[2]);
+    params.time_to_eat = atol(argv[3]);
+    params.time_to_sleep = atol(argv[4]);
+    // params.meals_needed = (argc == 6) ? atoi(argv[5]) : 0;
+    // params.stop = 0;
+
+    if (params.num_philos < 1 || params.time_to_die < 60 || params.time_to_eat < 60 || params.time_to_sleep < 60)
+    {
+        printf("Arguments must be positive integers and times >= 60ms\n");
+        return 1;
+    }
+
+    params.forks = malloc(sizeof(pthread_mutex_t) * params.num_philos);
+    params.philos = malloc(sizeof(t_philo) * params.num_philos);
+
+    pthread_mutex_init(&params.print_mutex, NULL);
+    // pthread_mutex_init(&params.death_mutex, NULL);
+
+    for (i = 0; i < params.num_philos; i++)
+        pthread_mutex_init(&params.forks[i], NULL);
+
+    // Init philosophers
+    // for (i = 0; i < params.num_philos; i++)
+    // {
+        // params.philos[i].id = i + 1;1
+        // params.philos[i].left_fork = &params.forks[i];
+        // params.philos[i].right_fork = &params.forks[(i + 1) % params.num_philos];
+        // params.philos[i].last_meal_time = timestamp_ms();
+        // params.philos[i].meals_eaten = 0;
+
+        // params.philos[i].params = &params;
+    // }
+
+    // Create philosopher threads
+    for (i = 0; i < params.num_philos; i++)
+    {
+        if (pthread_create(&params.philos[i].thread, NULL, philosopher_thread, &params.philos[i]) != 0)
+        {
+            printf("Error creating thread\n");
+            params.stop = 1;
+            break;
+        }
+    }
+
+    // Monitor philosophers
+    // while (!params.stop)
+    // {
+    //     for (i = 0; i < params.num_philos; i++)
+    //     {
+    //         if (check_death(&params.philos[i]))
+    //             params.stop = 1;
+    //     }
+    //     if (all_ate_enough(&params))
+    //         params.stop = 1;
+    //     usleep(1000);
+    // }
+
+    // Join threads
+    for (i = 0; i < params.num_philos; i++)
+        pthread_join(params.philos[i].thread, NULL);
+
+    // Cleanup
+    // for (i = 0; i < params.num_philos; i++)
+    //     pthread_mutex_destroy(&params.forks[i]);
+    // pthread_mutex_destroy(&params.print_mutex);
+    // pthread_mutex_destroy(&params.death_mutex);
+    // free(params.forks);
+    // free(params.philos);
+
+    return 0;
+}
+
+crouns@penguin:~/p/philosophers$ 
